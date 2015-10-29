@@ -1,0 +1,185 @@
+---
+title: " SlideRule Capstone project part I: San Francisco Crime Exploration"
+author: "Barath Ezhilan"
+date: "September 11, 2015"
+output: html_document
+---
+
+#Introduction
+
+Recent [news reports](http://www.latimes.com/local/crime/la-me-aa2-snapshot-sf-crime-20141120-story.html) have suggested that there is an increase in rate of property crime, such as thefts and burgalary, and the rate of violent crime, such as robbery and assault in San Francisco, with [some reports](http://www.nytimes.com/2015/08/17/technology/blending-tech-workers-and-locals-in-san-franciscos-troubled-mid-market.html) linking it to increasing rates of income inequality.
+
+A quantitative understanding of crime in San Francisco is of great use for the San Francisco Police Department in a multitude of ways, for ex., addressing imbalanced workload between police districts. Efforts towards a [data driven boundary restructuring of police districts in San Francisco](http://www.publicsafetystrategies.com/reports/SFPDDistrnoltr.pdf) are already underway. Insight into district-wise prevalence of various crimes will also be crucial in effectively identifying staffing needs and resource allocations of a department.
+
+In this work, we perform a exploratory data analysis and classification of the San Francisco crime dataset downloaded from the [ongoing kaggle competition](https://www.kaggle.com/c/sf-crime).
+
+# Exploratory Data Analysis
+
+We now load the dataset and look at its structure
+```{r installpackages, include = FALSE}
+#install.packages(ggmap, repos='http://cran.rstudios.com')
+library(ggmap)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+```
+```{r}
+setwd('/Users/Barath/Dropbox/data_science/SlideRule/Capstone/SF_crime_exploration/')
+train <- read.csv(file = 'train.csv')
+str(train)
+```
+
+The data set contains 878049 observations of crime and 9 features describing the date/time, location, crime category/description and resolution. The feature 'PdDistrict' (Police Districts) refers to the [district policestation](http://sf-police.org/index.aspx?page=796) where these crimes were registered. A map demarcating the district boundaries can be found [here](http://sf-police.org/Modules/ShowDocument.aspx?documentid=27484) or [here](http://scansf.com/sfpd_map.pdf). San Francisco is currently divided into ten police districts: Bayview, Central, Ingleside, Mission, Northern Park, Richmond, Southern, Taraval and Tenderloin. 
+
+Let's first create a district wise barplot of the crime 
+```{r}
+qplot(x=PdDistrict, data=train,binwidth=1, col=I("red"),fill=I("green")) + xlab('District') +
+  theme(axis.text.x = element_text(angle = 90, size = 12),
+        axis.title.x = element_text(size = 12),
+        axis.text.y = element_text( size = 12),
+        axis.title.y = element_text(size=12),
+        text = element_text(size = 12)) 
+```
+
+It can be seen that the crime count varies significantly across districts with the largest occurence in Southern and Mission districts.
+
+To gain more perspective on the district wise crime, it would be useful to have the baseline population and percent landmass of these districts, which is extracted from the [SFPD 2007 report page 40](http://www.publicsafetystrategies.com/reports/SFPDDistrnoltr.pdf) (even though we acknowledge that the crime statistics of a particular district also crucially depends on nature of the population, events taking place in the district and elasticity/time fluctutations of the population because of growth / influx of tourists).
+
+```{r}
+District_info <- data.frame(levels(train$PdDistrict),c(60301,69276,132328,83235,82348,59572,93693,24157,147806,21669),c(17.5,4.1,15.4,6.4,6.1,6.7,12.7,6.5,23.9,0.5))
+names(District_info) <- c('PdDistrict','population','landmass')
+```
+
+We create a barplot to visualize the district wise population. 
+
+```{r}
+ggplot(aes(x=PdDistrict, y=population),data=District_info) +geom_bar(stat='identity',col=I("red"),fill=I("green"))+ xlab('District') + ylab('population') +
+  theme(axis.text.x = element_text(angle = 90, size = 12),
+        axis.title.x = element_text(size = 12),
+        axis.text.y = element_text( size = 12),
+        axis.title.y = element_text(size=12),
+        text = element_text(size = 12))  
+```
+
+We see that Taraval and Ingleside districts have the highest populations, while still reporting relatively lower crime counts. We also see that, southern district inspite of having second lowest population,has the highest prevalence of crime. A normalized measure of crime prevalence in a district would be number of crimes per year per 100000 inhabitants. The adjusted count is calculated as (total number of crimes / 12 / district population)*100000. We use the group_by commands to calculate the district wise count and the adjusted count.
+
+
+```{r}
+train_group_district <- train %>% group_by(PdDistrict) %>% summarize(count = n())
+train_group_district <- merge(train_group_district,District_info)
+train_group_district$adjusted_count <- as.integer(train_group_district$count*100000/12/train_group_district$population)
+```
+
+We create a barplot of adjusted annual crime count, which clearly shows that Southern and Tenderloin districts have a significantly higher incidences of crime compared to other districts as measured by the annual adjusted crime count. 
+
+```{r}
+ggplot(aes(x=PdDistrict, y=adjusted_count),data=train_group_district) +geom_bar(stat='identity',col=I("red"),fill=I("green"))+ xlab('District') + ylab('Adjusted annual crime count') +
+  theme(axis.text.x = element_text(angle = 90, size = 12),
+        axis.title.x = element_text(size = 12),
+        axis.text.y = element_text( size = 12),
+        axis.title.y = element_text(size=12),
+        text = element_text(size = 12))  
+```
+
+The higher crime density in the Southern and Tenderloin districts can also been seen from the density map below, which is created by discreting the latitude and longitude features and then calculate counts using the group_by command.
+```{r}
+train$X <- round(train$X,3)
+train$Y <- round(train$Y,3)
+train_location <- train %>% group_by(X,Y) %>% summarize(count = n())
+map<-get_map(location="sanfrancisco",zoom=12,source="osm")
+ggmap(map) +
+     geom_point(data=train_location, aes(x=X, y=Y, colour = count), alpha=0.2) +
+#     facet_wrap(~Category, ncol = 4) + 
+  scale_colour_gradient(limits = c(1,1000),low="#22FF00", high="#FF0000",trans = "log",labels = c(1, 10, 100, 1000))+
+  theme(axis.text.x = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        axis.text.y = element_text( size = 12),
+        axis.title.y = element_text(size=12),
+        text = element_text(size = 12)) 
+     
+```
+
+We now explore the variation of crime with time features: DayOfWeek, year and hour. First, we extract the 'year' and 'hour of day' from the 'Dates' column of the dataset using the ymd_hms function from the lubridate package.
+
+```{r}
+mydate <- ymd_hms(as.character(train$Dates))
+train$year <- as.factor(format(mydate, "%y"))
+train$hour <- as.factor(format(mydate, "%H"))
+```
+The most time feature most significant variation of crime statistics is the 'hour of day' which shows that the higher prevalence of crime between 03:00 PM - 07:00 PM and lowest prevalence of crime in the early morning 02:00 AM - 06:00 AM as can be seen from the barplot below
+```{r}
+qplot(x=hour, data=train,binwidth=1, col=I("red"),fill=I("green")) + xlab('Hour of Day') +
+  theme(axis.text.x = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        axis.text.y = element_text( size = 12),
+        axis.title.y = element_text(size=12),
+        text = element_text(size = 12)) 
+```
+
+We now use the facet_wrap pictures to perform exploratory data analysis simultaneously with two or more variables.
+
+```{r setup, include=FALSE}
+require(knitr)
+opts_chunk$set(dev = 'pdf')
+opts_chunk$set(fig.width=22, fig.height=30)
+```
+
+We first look at the district wise prevalence of the various crime categories in each district using the bar plot facet wrapped by 'PdDistrict'
+
+```{r}
+qplot(x=Category, data=train,binwidth=1, col=I("red"),fill=I("green")) + facet_wrap(~PdDistrict, ncol = 5) + xlab('District') +
+  coord_flip() +
+  theme(axis.text.x = element_text(angle = 90, size = 25),
+        axis.title.x = element_text(size = 25),
+        axis.text.y = element_text( size = 25),
+        axis.title.y = element_text(size=25),
+        text = element_text(size = 25))
+```
+This plot gives us insight the nature of crime that is more prevalent in each district. For instance, in the Tenderloin the leading crime is 'drug/narcotics' related while in the southern district, it is 'Larceny/theft'. In most disctricts, 'Larceny/theft' happens to be the most reported crime.
+
+To gain more perspective on the crimes with lower incidence, we perform the same analysis but facet wrapped by 'Category' instead.
+
+```{r}
+qplot(x=PdDistrict, data=train,binwidth=1, col=I("red"),fill=I("green")) + facet_wrap(~Category,scales="free_y", ncol = 4) + xlab('District') +
+  theme(axis.text.x = element_text(angle = 90, size = 25),
+        axis.title.x = element_text(size = 25),
+        axis.text.y = element_text( size = 25),
+        axis.title.y = element_text(size=25),
+        text = element_text(size = 25)) 
+```
+This plot shows that, for a given category, the 'district' feature heavily influences the prevalence/probability of crime. For instance, while the 'BayView' district has a lower/moderate incidence of overall crime, 'Arson' is most prevalent in 'BayView' district than other district. Similarly 'Burglary' is most prevalent in 'Northern' district and 'Disorderly conduct is most prevalent in 'Mission' district. We calculate the highest prevalence of each crime below.
+
+```{r}
+train_district <- train %>% group_by(Category,PdDistrict) %>% summarize(count = n()) %>% mutate(prop = count/sum(count))
+train_district <- train_district %>% group_by(Category) %>% summarize(totalcount = sum(count),District  = PdDistrict[which.max(prop)], Proportion = max(prop)) %>% arrange(desc(totalcount))
+train_district <- train_district[c(1,3,4)]
+train_district$Proportion <- round(train_district$Proportion,2)
+```
+The district with highest prevalence and the proportion of the top 20 crimes are shown below.
+```{r}
+head(train_district,20)
+```
+It can be seen that most crimes have their highest prevalence in 'Southern' district, thus explaining the largest crime occurence in that district. It can also be seen that other districts such as Mission, Bayview, Ingleside and Tenderloin have the highest share of Prostitution, Weapon Laws, Vehicle Theft and Drug/Narcotic related crimes respectively.
+
+Finally, we look at the annual variation of crime facet wrapped by the Category variable.
+
+```{r}
+qplot(x=year, data=train,binwidth=1, col=I("red"),fill=I("green")) + facet_wrap(~Category,scales="free_y", ncol = 4)+ xlab('Year [2003 - 2015]') +
+  theme(axis.text.x = element_text(angle = 90, size = 25),
+        axis.title.x = element_text(size = 25),
+        axis.text.y = element_text( size = 25),
+        axis.title.y = element_text(size=25),
+        text = element_text(size = 25)) 
+```
+
+This plot shows striking trends including significant drop of suicide, prostitution, family offenses, disorderly conduct, forgery, gambling, vehicle theft related crimes over the last few years and significant increase in larceny/theft, kidnapping, stolen property related crimes.
+
+#Concluding remarks
+
+In part I of the project, we explored the San Francisco crime dataset and identified several interesting trends. In particular, we identified that the location features (PdDistrict, X and Y) and the time features (Hour, Year, DayOfWeek) can be strong determinants of the prevalence of different kinds of crime. 
+
+In part II of the project, we will explore the development of classification models to predict the Category of crime given time and location using Naive Bayes, Logistic Regression, Decision Trees and Random Forest models.
+
+
+
+

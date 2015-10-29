@@ -1,0 +1,121 @@
+---
+title: "San Francisco Crime Classification"
+author: "Barath Ezhilan"
+date: "September 3, 2015"
+output: html_document
+---
+
+The goal of this project is to analyze and understand the [San Francisco crime dataset](https://www.kaggle.com/c/sf-crime) which contains crime data from 2003 to 2015.
+
+This is part II of the project where we use a classification model to predict the Category of crime given the time and location of the crime. 
+
+First we download some useful packages and load their libraries.
+
+```{r}
+install.packages('e1071',   repos = 'http://cran.rstudio.com')
+install.packages('mlbench', repos = 'http://cran.rstudio.com')
+install.packages('caret',   repos = 'http://cran.rstudio.com')
+install.packages('dplyr',   repos = 'http://cran.rstudio.com')
+install.packages("caTools", repos = 'http://cran.rstudio.com')
+install.packages('nnet', repos = 'http://cran.rstudio.com')
+install.packages('lubridate', repos = 'http://cran.rstudio.com')
+install.packages('rpart', repos = 'http://cran.rstudio.com')
+install.packages('rpart.plot', repos = 'http://cran.rstudio.com')
+library(reshape2)
+library(e1071)
+library(caret)
+library(dplyr)
+library(caTools)
+library(nnet)
+library(lubridate)
+library(rpart)
+library(rpart.plot)
+```
+
+The accuracy of the classification algorithm is measured in terms of a LogLoss function which is the evaluation metric as defined in the [kaggle page] (https://www.kaggle.com/c/sf-crime/details/evaluation). We define it here. 
+
+```{r}
+LogLoss <- function(actual, predicted, eps=1e-15) {
+  predicted[predicted < eps] <- eps;
+  predicted[predicted > 1 - eps] <- 1 - eps;
+  -1/nrow(actual)*(sum(actual*log(predicted)))
+}
+```
+
+Now, we are ready to load the data from train.csv into our dataframe train_original
+
+```{r}
+#set the working directory
+setwd('/Users/Barath/Dropbox/data_science/SlideRule/Capstone/SF_crime_exploration/')
+#load the training data
+train_original <- read.csv(file = 'train.csv') 
+```
+A quick exploration of the dataset shows that the 'Dates' variable needs some quick formatting. We use the ymd_hms() function to extract the 'Year' and 'Hour' as new factor columns.
+
+```{r}
+#process the date variable to get the Year and Hour
+mydate <- ymd_hms(as.character(train_original$Dates)) 
+train_original$Year <- as.factor(format(mydate, "%y")) 
+train_original$Hour <- as.factor(format(mydate, "%H")) 
+```
+
+We also find it useful to round the 'X' latitude and 'Y' longitude values to 3 decimal places and convert them to new factor variables 'XF' and 'YF' to use them in our classification model.
+
+```{r}
+# convert X latitude and Y longtitude to factor after rounding upto 3 decimal places
+train_original$XF <- as.factor(round(train_original$X,3)) 
+train_original$YF <- as.factor(round(train_original$Y,3))
+```
+
+We now subset our original dataframe 'train_original' to include only columns relevant to our classification algorithm viz., 'Category','DayOfWeek', 'Hour','Year','PdDistrict','XF','YF'
+
+```{r}
+ # make a copy of the original data set and select only the variables we are going to use for classification
+train <- train_original %>% select(Category, DayOfWeek, PdDistrict, XF, YF, Hour, Year) #%>% sample_n(50000)
+```
+We now split our dataset into training and test sets.
+```{r}
+# Split the data into training and test sets
+set.seed(3000)
+split = sample.split(train$Category, SplitRatio = 0.75) 
+crimeTrain = subset(train, split == TRUE)
+crimeTest = subset(train, split == FALSE)
+```
+
+Using the DummyVars function, we convert the test dataset outcomes for the Category of crime into a binary matrix format. 
+
+```{r}
+#Here we prepare the real outcome in the matrix format 
+dmy <- dummyVars("~ Category", data = crimeTest)
+REAL <- data.frame(predict(dmy, newdata = crimeTest))
+```
+
+The best Naive-Bayes model I have identified so far is built using the columns latitude, longitude, hour, day of week and year.
+
+#NaiveBayes
+A quick review of the NaiveBayes classifier can be found [here](http://cloudacademy.com/blog/naive-bayes-classifier/)
+```{r}
+#Define the model using the training data set
+NBModel <- naiveBayes(Category ~ XF + YF + DayOfWeek + Hour + Year, data = crimeTrain, na.action = na.omit)
+#Make predictions for the test data set and store the matrix of probabilities in NBpred
+NBPred <- predict(NBModel, crimeTest, type = 'raw')
+# Calculate the LogLoss
+NBLoss = LogLoss(REAL,NBPred)
+NBLoss
+```
+We get a value of 2.51 which is pretty competitive is in the top 100 of the Kaggle competitors.
+
+We also try other methods here.
+
+Next, we try decision trees
+```{r}
+TreeModel <- rpart(Category ~ PdDistrict + DayOfWeek + Hour,   data=crimeTrain)
+TreePred <- predict(TreeModel, data = crimeTest, type = c("prob"))
+LogLoss(REAL,TreePred)
+```
+
+```{r}
+ForestModel <- randomForest(Category ~ PdDistrict + DayOfWeek + Hour + Year,   data=crimeTrain)
+ForestPred = predict(ForestModel, crimeTest,type = 'prob')
+LogLoss(REAL,ForestPred)
+```
